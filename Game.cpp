@@ -14,9 +14,12 @@
 #include "gameplay/GeoMotors.h"
 #include "gameplay/PlayerController.h"
 #include "gameplay/CollisionSystem.h"
+#include "Gameplay/CollisionSystemMaze.h"
 #include "gameplay/PillarRenderer.h"
 #include "gameplay/PlayerRenderer.h"
 #include "gameplay/HUDRenderer.h"
+#include "Gameplay/MazeGenerator.h"
+#include "Gameplay/MazeRenderer.h"
 
 using namespace utils;
 
@@ -69,6 +72,26 @@ Game::Game(const Window &window)
 
     // pick a spawn that clears the pillars’ influence ring
     SpawnOutsideInfluence(150.f);
+
+
+    // random maze each run
+    gameplay::MazeGenerator::Generate(
+        m_Maze,
+        14, 10,            // cols, rows
+        80.f,              // margin
+        20.f,              // wall thickness
+        m_Window.width,
+        m_Window.height,   // use default 0 seed -> random_device
+        0                  // <- keep this 0 so it seeds randomly
+    );
+
+    // put player at start
+    m_Character = m_Maze.startCenter;
+    m_Vx = m_Vy = 0.f;
+    m_VzEnergy = 0.f;
+
+
+    m_Maze.endRadius = 22.f;
 }
 
 Game::~Game() {
@@ -256,13 +279,16 @@ void Game::ProcessKeyUpEvent(const SDL_KeyboardEvent &e) {
 
 // update / draw
 void Game::Update(float dt) {
+
     Integrate(dt);
     HandleWallCollisions();
+
 }
 
 void Game::Draw() const {
     glClearColor(0.05f, 0.06f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+    gameplay::MazeRenderer::Draw(m_Maze);
 
     DrawPillars();
     DrawCharacter();
@@ -288,7 +314,7 @@ void Game::SpawnOutsideInfluence(float minClearance) {
 
     auto minDistToPillars = [&](float px, float py) -> float {
         float dmin = std::numeric_limits<float>::max();
-        for (const ThreeBlade &C: m_PillarArray) {
+        for (const auto& [C,T]: m_PillarArray) {
             const float dx = px - C[0];
             const float dy = py - C[1];
             const float d = std::sqrt(dx * dx + dy * dy);
@@ -312,12 +338,12 @@ void Game::SpawnOutsideInfluence(float minClearance) {
     // if that spot is still too close -> push it outward away from the nearest pillar
     if (!m_PillarArray.empty() && bestMin < minClearance) {
         int nearest = 0;
-        float ndx = bestX - m_PillarArray[0][0];
-        float ndy = bestY - m_PillarArray[0][1];
+        float ndx = bestX - m_PillarArray[0].first[0];
+        float ndy = bestY - m_PillarArray[0].first[1];
         float nr = std::sqrt(ndx * ndx + ndy * ndy);
         for (int i = 1; i < (int) m_PillarArray.size(); ++i) {
-            float dx = bestX - m_PillarArray[i][0];
-            float dy = bestY - m_PillarArray[i][1];
+            float dx = bestX - m_PillarArray[i].first[0];
+            float dy = bestY - m_PillarArray[i].first[1];
             float r = std::sqrt(dx * dx + dy * dy);
             if (r < nr) {
                 nr = r;
@@ -349,6 +375,22 @@ void Game::SpawnOutsideInfluence(float minClearance) {
 
 // gameplay delegation
 void Game::Integrate(float dt) {
+
+    // collide with the maze walls (circle vs AABB)
+    gameplay::CollisionSystemMaze::Resolve(
+        m_Maze, m_Character, m_Vx, m_Vy, m_CharacterRadius, m_BounceLoss);
+
+    // check reaching maze end (use PGA join for distance)
+    if (!m_Maze.reachedPrinted) {
+        TwoBlade L = m_Character & m_Maze.endCenter; // line connecting them
+        float R = L.Norm();                            // Euclidean distance
+        if (R <= (m_Maze.endRadius + m_CharacterRadius)) {
+            std::cout << "Reached end point\n";
+            m_Maze.reachedPrinted = true;
+        }
+    }
+
+
     gameplay::InputState in{m_HoldUp, m_HoldDown, m_HoldLeft, m_HoldRight, m_HoldBoost};
 
     gameplay::PlayerController::Tuning tune{};
@@ -362,19 +404,24 @@ void Game::Integrate(float dt) {
         rp.TryReflect(m_Character, m_Vx, m_Vy, dt);
 
     // combine static + movable
-    std::vector<ThreeBlade> pillars;
+    std::vector<std::pair<ThreeBlade,gameplay::PillarType>> pillars;
     pillars.reserve(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     pillars.insert(pillars.end(), m_PillarArray.begin(), m_PillarArray.end());
-    for (const auto& mp : m_Movable)    pillars.push_back(mp.C);
-    for (const auto& rp : m_Reflectors) pillars.push_back(rp.Center());
+    for (const auto& mp : m_Movable)    pillars.emplace_back(mp.C,gameplay::PillarType::Movable);
+    for (const auto& rp : m_Reflectors) pillars.emplace_back(rp.Center(),gameplay::PillarType::Reflect);
 
     // active index clamped to combined set
     int active = pillars.empty() ? -1
                : std::clamp(m_CurrentPillarIndex, 0, int(pillars.size()) - 1);
 
+    std::vector<ThreeBlade> blades;
+    blades.reserve(pillars.size());
+    std::transform(pillars.begin(), pillars.end(), std::back_inserter(blades),
+                   [](const auto& pr){ return pr.first; });
+
     gameplay::PlayerController::StepKinematics(
         m_Character, m_Vx, m_Vy, m_VzEnergy,
-        in, pillars, active, dt, tune);
+        in, blades, active, dt, tune);
 }
 
 void Game::HandleWallCollisions() {
@@ -385,14 +432,15 @@ void Game::HandleWallCollisions() {
 
 // drawing
 void Game::DrawPillars() const {
-    std::vector<ThreeBlade> pillars;
+    std::vector<std::pair<ThreeBlade,gameplay::PillarType>> pillars;
     pillars.reserve(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     pillars.insert(pillars.end(), m_PillarArray.begin(), m_PillarArray.end());
-    for (const auto& mp : m_Movable)    pillars.push_back(mp.C);
-    for (const auto& rp : m_Reflectors) pillars.push_back(rp.Center());
+    for (const auto& mp : m_Movable)    pillars.emplace_back(mp.C, gameplay::PillarType::Movable);
+    for (const auto& rp : m_Reflectors) pillars.emplace_back(rp.Center(),gameplay::PillarType::Reflect);
 
     int active = pillars.empty() ? -1
                : std::clamp(m_CurrentPillarIndex, 0, int(pillars.size()) - 1);
+
 
     gameplay::PillarRenderer::Draw(pillars, active);
 }
@@ -424,7 +472,7 @@ ThreeBlade Game::ApplyMotor(const ThreeBlade &X, const Motor &M) {
 
 // world editing helpers
 void Game::AddPillar(const ThreeBlade &center) {
-    m_PillarArray.push_back(center);
+    m_PillarArray.emplace_back(center,gameplay::PillarType::Normal);
 }
 
 void Game::GEOAClone() {

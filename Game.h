@@ -7,7 +7,9 @@
 
 #include "structs.h"
 #include "FlyFish.h"
+#include "Gameplay/Maze.h"
 #include "Gameplay/MovablePillar.h"
+#include "Gameplay/PillarRenderer.h"
 #include "Gameplay/ReflecPillar.h"
 
 
@@ -83,11 +85,16 @@ private:
     float m_MaxSpeed{ 220.f };
     float m_BounceLoss{ 0.75f };
 
-    std::vector<ThreeBlade> m_PillarArray{};
+    std::vector<std::pair<ThreeBlade,gameplay::PillarType>> m_PillarArray{};
     std::vector<gameplay::MovablePillar> m_Movable;
     std::vector<gameplay::ReflectPillar> m_Reflectors;
 
+    gameplay::Maze m_Maze;
+
     int   m_CurrentPillarIndex{ 0 };
+
+
+
 
 
 

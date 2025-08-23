@@ -4,30 +4,37 @@
 
 #include "ReflecPillar.h"
 
-gameplay::ReflectPillar gameplay::ReflectPillar::Make(const ThreeBlade &center, float triggerR, float cooldown) {
+
+gameplay::ReflectPillar gameplay::ReflectPillar::Make(const ThreeBlade &center, float triggerR) {
     ReflectPillar p;
     p.C = center;
     p.triggerR = triggerR;
-    p.cooldownSec = cooldown;
-    p.cooldownLeft = 0.f;
+    p.wasInside = false;
     return p;
 }
 
-void gameplay::ReflectPillar::TryReflect(ThreeBlade &X, float &vx, float &vy, float dt) {
-    if (cooldownLeft > 0.f) cooldownLeft -= dt;
+gameplay::ReflectPillar gameplay::ReflectPillar::Make(const ThreeBlade &center, float triggerR, float) {
+    return Make(center, triggerR);
+}
 
+void gameplay::ReflectPillar::TryReflect(ThreeBlade &X, float &vx, float &vy, float) {
     // distance via PGA: L = X & C, R = L.Norm()
     TwoBlade L = X & C;
     float R = L.Norm();
+    bool inside = (R <= triggerR);
 
-    if (R <= triggerR && cooldownLeft <= 0.f)
+    // Rising edge: just entered -> reflect once
+    if (inside && !wasInside)
     {
+        // point reflection = rotation by pi about C
         Motor Rm = GeoMotors::MakeRotationAboutPoint(C, 3.14159265358979323846f);
         X = GeoMotors::Apply(X, Rm);
 
+        // rotate velocity by pi -> negate
         vx = -vx;
         vy = -vy;
-
-        cooldownLeft = cooldownSec;
     }
+
+    // update latch (leaving resets it)
+    wasInside = inside;
 }

@@ -5,15 +5,26 @@ using namespace utils;
 
 namespace gameplay {
 
-    void PillarRenderer::Draw(const std::vector<ThreeBlade>& pillars, int current)
+    void PillarRenderer::Draw(const std::vector<std::pair<ThreeBlade,PillarType>>& pillars, int current)
     {
+        PillarColors c;
         for (size_t i = 0; i < pillars.size(); ++i)
         {
             const bool sel = int(i) == current;
-            SetColor(sel ? Color4f{ 1.f, 0.7f, 0.1f, 0.9f } : Color4f{ 0.3f, 0.8f, 1.f, 0.6f });
-            FillCircle(pillars[i][0], pillars[i][1], sel ? 10.f : 7.f);
-            SetColor(Color4f{ 1.f,1.f,1.f,0.2f });
-            DrawCircle(pillars[i][0], pillars[i][1], 120.f);
+
+            Color4f CurrColor{};
+            switch (pillars[i].second) {
+                case PillarType::Movable: CurrColor = c.Red;  break;
+                case PillarType::Linear:  CurrColor = c.Green; break;
+                case PillarType::Seek:    CurrColor = c.Blue; break;
+                case PillarType::Reflect: CurrColor = c.Yellow; break;
+                case PillarType::Normal: CurrColor = c.White; break;
+
+            }
+
+            SetColor(CurrColor);
+            FillCircle(pillars[i].first[0], pillars[i].first[1], sel ? 10.f : 7.f);
+            DrawCircle(pillars[i].first[0], pillars[i].first[1], 120.f);
         }
     }
 
