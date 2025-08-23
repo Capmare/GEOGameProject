@@ -68,7 +68,7 @@ namespace gameplay
             const float energyBoost = (k.slingFactor * vzEnergy) / std::max(R, k.minSpinR);
             swirlAcc += k.accel * 0.35f * energyBoost;
 
-            // tangential push; keep radial control to player/gravity
+            // tangential push keep radial control to player/gravity
             ax += swirlAcc * tx;
             ay += swirlAcc * ty;
 

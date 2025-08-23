@@ -7,8 +7,7 @@
 
 #include "structs.h"
 #include "FlyFish.h"
-
-
+#include "Gameplay/MovablePillar.h"
 
 
 class Game
@@ -51,6 +50,8 @@ private:
     void GEOAClone();
 
 private:
+    void AddMovablePillar(const gameplay::MovablePillar& p) { m_Movable.push_back(p); }
+
     struct SDLWindowDeleter { void operator()(SDL_Window* w) const noexcept { if (w) SDL_DestroyWindow(w); } };
     struct GLContextDeleter { void operator()(SDL_GLContext c) const noexcept { if (c) SDL_GL_DeleteContext(c); } };
 
@@ -79,5 +80,8 @@ private:
     float m_BounceLoss{ 0.75f };
 
     std::vector<ThreeBlade> m_PillarArray{};
+    std::vector<gameplay::MovablePillar> m_Movable;
     int   m_CurrentPillarIndex{ 0 };
+
+
 };
