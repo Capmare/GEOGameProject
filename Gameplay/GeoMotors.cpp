@@ -3,13 +3,22 @@
 #include "Gameplay/GeoMotors.h"
 #include "FlyFish.h"
 
+
+// Credits to:
+// The Bivector discord server for their documents that i found in the PGA channel
+// https://bivector.net/
+// blob:https://bivector.net/cd7a6524-b2f7-4063-8b78-f4166cac9cbb // for C++ resources
+// https://www.youtube.com/@bivector
+// https://projectivegeometricalgebra.org/ this website has nice images explaining multiple formulas
+// https://terathon.com/gdc23_lengyel.pdf // this has different names but is nice to know
+
+
 namespace gameplay
 {
     // FlyFish Motor layout:
     // [0]=scalar, [1]=e01, [2]=e02, [3]=e03, [4]=e23, [5]=e31, [6]=e12, [7]=I
 
     // Translator (2D PGA)
-    // Using your current convention:
     //   e01 takes X, inverted  -> coeff(e01) = -(dx/2)
     //   e02 takes Y, inverted  -> coeff(e02) = -(dy/2)
     Motor GeoMotors::MakeTranslator(float dx, float dy)
@@ -21,24 +30,24 @@ namespace gameplay
         return T;
     }
 
-    // Rotation about a finite point (PGA rotor)
-    // R = cos(theta/2) - C * sin(theta/2)
-    // Point C (weight-1): C = e12 + x e20 + y e01, with e20 = -e02
-    // So the packed motor has:
-    //   e12 -> -sin(theta/2)
-    //   e02 -> +x * sin(theta/2)
-    //   e01 -> -y * sin(theta/2)
     Motor GeoMotors::MakeRotationAboutPoint(const ThreeBlade& C, float angRad)
     {
-        const float c = std::cos(0.5f * angRad);
-        const float s = std::sin(0.5f * angRad);
+        // ensure we use Euclidean coords of a weight-1 point
+        float w = C.Norm();
+        float x = C[0], y = C[1], z = C[2];
+        if (std::fabs(w) > 1e-6f) { x /= w; y /= w; z /= w; }
 
-        Motor R{};
-        R[0] = c;           // scalar
-        R[6] = -s;          // e12
-        R[2] = +C[0] * s;   // e02 (x part)
-        R[1] = -C[1] * s;   // e01 (y part)
-        return R;
+        static const TwoBlade kAxisZ = TwoBlade::LineFromPoints(0.f, 0.f, 0.f,
+                                                                0.f, 0.f, 1.f);
+
+        const float angDeg = angRad / DEG_TO_RAD;
+
+        // translate to origin, rotate about z, translate back
+        Motor Tneg = GeoMotors::MakeTranslator(-x, -y);
+        Motor R0   = Motor::Rotation(angDeg, kAxisZ);
+        Motor Tpos = GeoMotors::MakeTranslator(+x, +y);
+
+        return Tpos * (R0 * Tneg);
     }
 
     // Reversion -> flip all grade-2 parts

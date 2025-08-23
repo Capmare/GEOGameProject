@@ -63,6 +63,9 @@ Game::Game(const Window &window)
     m_Movable.push_back(p2);
     m_Movable.push_back(p3);
 
+    AddReflector(ThreeBlade(450.f, 180.f, 0.f), 90.f);
+    AddReflector(ThreeBlade(120.f, 420.f, 0.f), 110.f);
+
 
     // pick a spawn that clears the pillars’ influence ring
     SpawnOutsideInfluence(150.f);
@@ -355,12 +358,15 @@ void Game::Integrate(float dt) {
     for (auto& mp : m_Movable)
         mp.Step(dt, 0.f, 0.f, m_Window.width, m_Window.height, m_BounceLoss);
 
+    for (auto& rp : m_Reflectors)
+        rp.TryReflect(m_Character, m_Vx, m_Vy, dt);
 
     // combine static + movable
     std::vector<ThreeBlade> pillars;
-    pillars.reserve(m_PillarArray.size() + m_Movable.size());
+    pillars.reserve(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     pillars.insert(pillars.end(), m_PillarArray.begin(), m_PillarArray.end());
-    for (const auto &mp: m_Movable) pillars.push_back(mp.C);
+    for (const auto& mp : m_Movable)    pillars.push_back(mp.C);
+    for (const auto& rp : m_Reflectors) pillars.push_back(rp.Center());
 
     // active index clamped to combined set
     int active = pillars.empty() ? -1
@@ -380,13 +386,13 @@ void Game::HandleWallCollisions() {
 // drawing
 void Game::DrawPillars() const {
     std::vector<ThreeBlade> pillars;
-    pillars.reserve(m_PillarArray.size() + m_Movable.size());
+    pillars.reserve(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     pillars.insert(pillars.end(), m_PillarArray.begin(), m_PillarArray.end());
-    for (const auto &mp: m_Movable) pillars.push_back(mp.C);
+    for (const auto& mp : m_Movable)    pillars.push_back(mp.C);
+    for (const auto& rp : m_Reflectors) pillars.push_back(rp.Center());
 
-    int active = pillars.empty()
-                     ? -1
-                     : std::clamp(m_CurrentPillarIndex, 0, int(pillars.size()) - 1);
+    int active = pillars.empty() ? -1
+               : std::clamp(m_CurrentPillarIndex, 0, int(pillars.size()) - 1);
 
     gameplay::PillarRenderer::Draw(pillars, active);
 }
@@ -423,4 +429,8 @@ void Game::AddPillar(const ThreeBlade &center) {
 
 void Game::GEOAClone() {
     AddPillar(ThreeBlade{m_Character[0], m_Character[1], 0.f, 1.f});
+}
+
+void Game::AddReflector(const ThreeBlade &c, float triggerR, float cooldown) {
+    m_Reflectors.push_back(gameplay::ReflectPillar::Make(c, triggerR, cooldown));
 }
