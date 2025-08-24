@@ -82,4 +82,63 @@ void CollisionSystemMaze::Resolve(const Maze& maze,
     }
 }
 
+void CollisionSystemMaze::DepenetratePosition(const Maze& maze,
+                                              ThreeBlade& X,
+                                              float radius,
+                                              int maxIters,
+                                              float epsilon)
+{
+    for (int iter = 0; iter < maxIters; ++iter)
+    {
+        bool any = false;
+        float px = X[0], py = X[1];
+
+        for (const auto& w : maze.walls)
+        {
+            // closest point on AABB to circle center
+            float qx = std::clamp(px, w.x, w.x + w.w);
+            float qy = std::clamp(py, w.y, w.y + w.h);
+            float dx = px - qx;
+            float dy = py - qy;
+            float d2 = dx*dx + dy*dy;
+
+            // corner/edge overlap (center outside the box footprint)
+            if (d2 > 0.f && d2 < radius*radius) {
+                float d = std::sqrt(std::max(d2, 1e-12f));
+                float nx = dx / d, ny = dy / d;
+                float push = (radius - d) + epsilon;
+                X = ThreeBlade(px + nx * push, py + ny * push, 0.f);
+                px = X[0]; py = X[1];
+                any = true;
+                continue;
+            }
+
+            // center exactly inside the rectangle (common after teleport)
+            // q == p -> d2 == 0. Push along the minimal axis to the nearest side.
+            if (qx == px && qy == py)
+            {
+                float dl = px - w.x;              // to left side
+                float dr = (w.x + w.w) - px;      // to right
+                float db = py - w.y;              // to bottom
+                float dt = (w.y + w.h) - py;      // to top
+
+                float bestPush = 1e9f, nx = 0.f, ny = 0.f;
+
+                if (dl < radius && dl < bestPush) { bestPush = radius - dl; nx = +1.f; ny = 0.f; }
+                if (dr < radius && dr < bestPush) { bestPush = radius - dr; nx = -1.f; ny = 0.f; }
+                if (db < radius && db < bestPush) { bestPush = radius - db; nx = 0.f;  ny = +1.f; }
+                if (dt < radius && dt < bestPush) { bestPush = radius - dt; nx = 0.f;  ny = -1.f; }
+
+                if (bestPush < 1e8f) {
+                    X = ThreeBlade(px + nx * (bestPush + epsilon),
+                                   py + ny * (bestPush + epsilon), 0.f);
+                    px = X[0]; py = X[1];
+                    any = true;
+                }
+            }
+        }
+
+        if (!any) break; // all clear
+    }
+}
 } // namespace gameplay

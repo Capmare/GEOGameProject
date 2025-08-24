@@ -30,7 +30,10 @@ namespace gameplay {
 
     class PillarRenderer {
     public:
-        static void Draw(const std::vector<std::pair<ThreeBlade, PillarType>> &pillars, int current);
+        static void Draw(const std::vector<std::pair<ThreeBlade,PillarType>>& pillars, int current);
+
+        static void Draw(const std::vector<std::pair<ThreeBlade,PillarType>>& pillars,
+                         const std::vector<int>& activeSet);
 
     };
 } // namespace gameplay

@@ -26,11 +26,12 @@ namespace gameplay {
 
 
         static void StepKinematics(
-            ThreeBlade& character,
+            ThreeBlade& X,
             float& vx, float& vy, float& vzEnergy,
             const InputState& in,
-            const std::vector<ThreeBlade>& pillars, int currentPillar,
-            float dt, const Tuning& k = Tuning());
+            const std::vector<ThreeBlade>& pillars,
+            const std::vector<int>& activeSet,
+            float dt, const Tuning& k);
     };
 
 } // namespace gameplay
