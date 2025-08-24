@@ -485,13 +485,12 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
     m_Movable.clear();
     m_Reflectors.clear();
 
-    // distributions using member RNG
-    std::uniform_int_distribution<int> count(0, maxPerType);
+    // RNG dists
+    std::uniform_int_distribution<int>   count(0, maxPerType);
     std::uniform_real_distribution<float> xDist(margin, m_Window.width  - margin);
     std::uniform_real_distribution<float> yDist(margin, m_Window.height - margin);
-    std::uniform_real_distribution<float> angDist(0.f, 6.2831853f);
 
-    // params for movers
+    // params
     std::uniform_real_distribution<float> speedDist(40.f, 120.f);
     std::uniform_real_distribution<float> omegaDist(-1.8f, 1.8f);
     std::uniform_real_distribution<float> orbitRDist(80.f, 160.f);
@@ -499,12 +498,30 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
     std::uniform_real_distribution<float> accelDist(250.f, 480.f);
     std::uniform_real_distribution<float> triggerDist(70.f, 140.f);
 
-    // counts (0..2)
     const int nNormal = count(m_Rng);
-    const int nMovable = count(m_Rng);  // orbit movers
+    const int nMovable = count(m_Rng);
     const int nLinear  = count(m_Rng);
     const int nSeek    = count(m_Rng);
     const int nReflect = count(m_Rng);
+
+    // unit direction from a join (P & Q) using the line's Euclidean part
+    auto unitDirFromJoin = [&](const ThreeBlade& P, float& ux, float& uy)
+    {
+        for (int tries = 0; tries < 16; ++tries) {
+            ThreeBlade Q(xDist(m_Rng), yDist(m_Rng), 0.f);
+            TwoBlade  L = P & Q;                   // line through P and Q
+            float dx = L[3];                       // Euclidean part: e23 -> dx
+            float dy = L[4];                       // e31 -> dy
+            float n2 = dx*dx + dy*dy;
+            if (n2 > 1e-8f) {
+                float inv = 1.0f / std::sqrt(n2);
+                ux = dx * inv; uy = dy * inv;
+                return true;
+            }
+        }
+        ux = 1.f; uy = 0.f;
+        return false;
+    };
 
     // Normal static pillars (white)
     for (int i = 0; i < nNormal; ++i) {
@@ -512,57 +529,50 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
         m_PillarArray.emplace_back(c, gameplay::PillarType::Normal);
     }
 
-    // Movable (orbit around a random anchor)
     for (int i = 0; i < nMovable; ++i) {
-        float ax = xDist(m_Rng), ay = yDist(m_Rng);
-        float R  = orbitRDist(m_Rng);
-        float a  = angDist(m_Rng);
-        float sx = ax + R * std::cos(a);
-        float sy = ay + R * std::sin(a);
-        float w  = omegaDist(m_Rng);
+        ThreeBlade anchor(xDist(m_Rng), yDist(m_Rng), 0.f);
+
+        float ux, uy; unitDirFromJoin(anchor, ux, uy);
+        float R = orbitRDist(m_Rng);
+
+        Motor T = gameplay::GeoMotors::MakeTranslator(R * ux, R * uy);
+        ThreeBlade start = gameplay::GeoMotors::Apply(anchor, T);
+
+        float w = omegaDist(m_Rng);
         m_Movable.push_back(
-            gameplay::MovablePillar::MakeOrbit(
-                ThreeBlade(ax, ay, 0.f),
-                ThreeBlade(sx, sy, 0.f),
-                w, 240.f));
+            gameplay::MovablePillar::MakeOrbit(anchor, start, w, 240.f));
     }
 
-    // Linear movers with random direction/speed
     for (int i = 0; i < nLinear; ++i) {
-        float x = xDist(m_Rng), y = yDist(m_Rng);
+        ThreeBlade S(xDist(m_Rng), yDist(m_Rng), 0.f);
+
+        float ux, uy; unitDirFromJoin(S, ux, uy);
         float s = speedDist(m_Rng);
-        float a = angDist(m_Rng);
-        float vx = s * std::cos(a);
-        float vy = s * std::sin(a);
+        float vx = s * ux;
+        float vy = s * uy;
+
         m_Movable.push_back(
-            gameplay::MovablePillar::MakeLinear(
-                ThreeBlade(x, y, 0.f),
-                vx, vy, 240.f));
+            gameplay::MovablePillar::MakeLinear(S, vx, vy, 240.f));
     }
 
-    // Seekers: random start, random target, random accel/maxSpeed
     for (int i = 0; i < nSeek; ++i) {
-        float x  = xDist(m_Rng),  y  = yDist(m_Rng);
-        float tx = xDist(m_Rng),  ty = yDist(m_Rng);
+        ThreeBlade start (xDist(m_Rng), yDist(m_Rng), 0.f);
+        ThreeBlade target(xDist(m_Rng), yDist(m_Rng), 0.f);
         float ms = maxSpeedDist(m_Rng);
         float ac = accelDist(m_Rng);
+
         m_Movable.push_back(
-            gameplay::MovablePillar::MakeSeek(
-                ThreeBlade(x, y, 0.f),
-                ThreeBlade(tx, ty, 0.f),
-                ms, ac, 240.f));
+            gameplay::MovablePillar::MakeSeek(start, target, ms, ac, 240.f));
     }
 
     // Reflectors: random center and trigger radius
     for (int i = 0; i < nReflect; ++i) {
         float x = xDist(m_Rng), y = yDist(m_Rng);
         float tr = triggerDist(m_Rng);
-        m_Reflectors.push_back(
-            gameplay::ReflectPillar::Make(
-                ThreeBlade(x, y, 0.f), tr));
+        m_Reflectors.push_back(gameplay::ReflectPillar::Make(ThreeBlade(x, y, 0.f), tr));
     }
 
-    // reset active rotation timer and choose a new active if possible
+    // reset active selection
     m_ActiveRotateTimer = 0.f;
     int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     if (total > 0) {
@@ -572,6 +582,7 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
         m_CurrentPillarIndex = -1;
     }
 }
+
 
 void Game::HandleWallCollisions()
 {
