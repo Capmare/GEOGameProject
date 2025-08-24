@@ -378,32 +378,24 @@ void Game::SpawnOutsideInfluence(float minClearance)
 // gameplay delegation
 void Game::Integrate(float dt)
 {
-    // 0) maze resolve at frame start
     gameplay::CollisionSystemMaze::Resolve(
         m_Maze, m_Character, m_Vx, m_Vy, m_CharacterRadius, m_BounceLoss);
 
-    // 1) reflect pre-kinematics (instant if already inside)
     bool reflected = false;
     for (auto& rp : m_Reflectors)
         reflected |= rp.TryReflect(m_Character, m_Vx, m_Vy, dt);
 
-    if (reflected) {
-        gameplay::CollisionSystemMaze::DepenetratePosition(
-            m_Maze, m_Character, m_CharacterRadius, 16, 0.75f);
-    }
 
-    // 2) step movables (with screen bounce)
+
     for (auto& mp : m_Movable)
         mp.Step(dt, 0.f, 0.f, m_Window.width, m_Window.height, m_BounceLoss);
 
-    // 3) combine pillars (statics + movables + reflectors)
     std::vector<std::pair<ThreeBlade,gameplay::PillarType>> pillars;
     pillars.reserve(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     pillars.insert(pillars.end(), m_PillarArray.begin(), m_PillarArray.end());
     for (const auto& mp : m_Movable)    pillars.emplace_back(mp.C, ToPillarType(mp));
     for (const auto& rp : m_Reflectors) pillars.emplace_back(rp.Center(), gameplay::PillarType::Reflect);
 
-    // 3b) auto-rotate the single active pillar every few seconds
     int total = int(pillars.size());
     int active = -1;
     if (total > 0) {
