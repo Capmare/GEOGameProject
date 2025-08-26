@@ -5,12 +5,12 @@
 #include <random>
 #include <SDL.h>
 
-#include "utils.h"                    // Window
-#include "FlyFish.h"                  // OneBlade, TwoBlade, ThreeBlade, Motor
-#include "Gameplay/Maze.h"            // gameplay::Maze
-#include "Gameplay/MovablePillar.h"   // gameplay::MovablePillar
+#include "utils.h"
+#include "FlyFish.h"
+#include "Gameplay/Maze.h"
+#include "Gameplay/MovablePillar.h"
 #include "Gameplay/PillarRenderer.h"
-#include "Gameplay/ReflecPillar.h"   // gameplay::ReflectPillar
+#include "Gameplay/ReflecPillar.h"
 
 class Game
 {
@@ -24,6 +24,12 @@ public:
     void AddPillar(const ThreeBlade& center);
     void GEOAClone();
     void AddReflector(const ThreeBlade& c, float triggerR, float cooldown = 0.f);
+
+    float DistPGA(const ThreeBlade &A, const ThreeBlade &B);
+
+    OneBlade UnitLine(float a, float b, float c);
+
+    bool CircleOverlapsAnyWall(const gameplay::Maze &maze, float cx, float cy, float r);
 
     // PGA wrappers
     Motor MakeTranslator(float dx, float dy) const;
@@ -43,6 +49,7 @@ private:
     void Draw() const;
 
     void DrawPillars() const;
+    void DrawCollectibles() const;
     void DrawCharacter() const;
     void DrawHUD() const;
 
@@ -50,8 +57,9 @@ private:
     void HandleWallCollisions();
     void SpawnOutsideInfluence(float minClearance);
 
-    // random spawner for pillars
+    // random spawners
     void SpawnRandomPillars(int maxPerType = 2, float margin = 80.f);
+    void SpawnCollectibles(int minCount = 2, int maxCount = 5, float margin = 60.f);
 
 private:
     // window + GL
@@ -69,24 +77,28 @@ private:
     float m_Vx{0.f}, m_Vy{0.f}, m_VzEnergy{0.f};
     float m_Accel{140.f}, m_Drag{0.90f}, m_EnergyDrag{0.985f}, m_MaxSpeed{220.f};
     float m_BounceLoss{0.75f};
-    float m_CharacterRadius{5.f};
+    float m_CharacterRadius{8.f};
 
     // input
     bool m_HoldUp{false}, m_HoldDown{false}, m_HoldLeft{false}, m_HoldRight{false}, m_HoldBoost{false};
 
     // pillars
-    std::vector<std::pair<ThreeBlade, gameplay::PillarType>> m_PillarArray; // static (Normal/white)
-    std::vector<gameplay::MovablePillar>  m_Movable;     // Linear/Seek/Orbit
-    std::vector<gameplay::ReflectPillar>  m_Reflectors;  // Reflect
+    std::vector<std::pair<ThreeBlade, gameplay::PillarType>> m_PillarArray;
+    std::vector<gameplay::MovablePillar>  m_Movable;
+    std::vector<gameplay::ReflectPillar>  m_Reflectors;
 
-    // single active pillar (for swirl), index into combined pillar list
     int   m_CurrentPillarIndex{-1};
     bool  m_AutoRotateActive{true};
     float m_ActiveRotateTimer{0.f};
-    float m_ActiveRotatePeriod{3.f};   // seconds, change active pillar periodically
+    float m_ActiveRotatePeriod{3.f};
 
-    // RNG (spawners + active rotation)
     std::mt19937 m_Rng;
+
+    // collectibles
+    std::vector<ThreeBlade> m_Collectibles;
+    std::vector<char>       m_Collected;   // 0/1
+    int   m_CollectiblesRemaining{0};
+    float m_CollectibleRadius{10.f};
 
     // maze
     gameplay::Maze m_Maze;

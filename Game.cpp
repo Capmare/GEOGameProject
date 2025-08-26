@@ -35,47 +35,41 @@ static gameplay::PillarType ToPillarType(const gameplay::MovablePillar& mp) {
     }
 }
 
-} // anon
+// PGA point distance
+static inline float DistPGA(const ThreeBlade& A, const ThreeBlade& B)
+{
+    TwoBlade L = A & B;
+    return L.Norm();
+}
+
+}
 
 Game::Game(const Window& window)
     : m_Window{window}
 {
     m_Viewport = SDL_Rect{0, 0, int(window.width), int(window.height)};
 
-    // seed RNG for spawners and active-rotation
     std::random_device rd;
     m_Rng.seed(rd());
 
     InitializeGameEngine();
 
-    // clamp dt to ~16.7 ms
     m_MaxElapsedSeconds = 1.f / 60.f;
 
-    // tuning
-    m_Vx = m_Vy = 0.f;
-    m_VzEnergy   = 0.f;
-    m_Accel      = 140.f;
-    m_Drag       = 0.90f;
-    m_EnergyDrag = 0.985f;
-    m_MaxSpeed   = 220.f;
-    m_BounceLoss = 0.75f;
-    m_CharacterRadius = 5.f;
-
-    // start center (y-up world via glOrtho)
     m_Character = ThreeBlade{ m_Window.width / 2.f, m_Window.height / 2.f, 0.f, 1.f };
 
-    // random maze each run
     gameplay::MazeGenerator::Generate(
         m_Maze, 14, 10, 80.f, 20.f,
-        m_Window.width, m_Window.height, 0); // seed 0 -> random_device
-    // spawn at maze start
+        m_Window.width, m_Window.height, 0);
+
     m_Character = m_Maze.startCenter;
     m_Vx = m_Vy = 0.f;
     m_VzEnergy = 0.f;
     m_Maze.endRadius = 22.f;
 
-    // random pillars (0..2 of each type)
     SpawnRandomPillars(2, 80.f);
+
+    SpawnCollectibles(2, 5, 60.f);
 
     // pick an initial active pillar if any
     int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
@@ -190,7 +184,6 @@ void Game::Run()
             case SDL_KEYDOWN: ProcessKeyDownEvent(e.key); break;
             case SDL_KEYUP:   ProcessKeyUpEvent(e.key);   break;
 
-            // SDL mouse is top-left origin -> convert to our bottom-left (y-up)
             case SDL_MOUSEMOTION:     e.motion.y = int(m_Window.height) - e.motion.y;  break;
             case SDL_MOUSEBUTTONDOWN: e.button.y = int(m_Window.height) - e.button.y;  break;
             case SDL_MOUSEBUTTONUP:   e.button.y = int(m_Window.height) - e.button.y;  break;
@@ -236,32 +229,29 @@ void Game::ProcessKeyDownEvent(const SDL_KeyboardEvent& e)
 
     case SDL_SCANCODE_E:
     {
-        // manual next active (cycles)
         int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
         if (total > 0) {
             if (m_CurrentPillarIndex < 0) m_CurrentPillarIndex = 0;
             else m_CurrentPillarIndex = (m_CurrentPillarIndex + 1) % total;
-            m_ActiveRotateTimer = 0.f; // reset timer
+            m_ActiveRotateTimer = 0.f;
         }
         break;
     }
     case SDL_SCANCODE_Q:
     {
-        // manual prev active (cycles)
         int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
         if (total > 0) {
             if (m_CurrentPillarIndex < 0) m_CurrentPillarIndex = 0;
             else m_CurrentPillarIndex = (m_CurrentPillarIndex - 1 + total) % total;
-            m_ActiveRotateTimer = 0.f; // reset timer
+            m_ActiveRotateTimer = 0.f;
         }
         break;
     }
     case SDL_SCANCODE_R:
     {
-        // regenerate pillars
+        // regenerate pillars only
         SpawnRandomPillars(2, 80.f);
         std::cout << "Random pillars regenerated\n";
-        // pick a fresh active
         int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
         if (total > 0) {
             std::uniform_int_distribution<int> pick(0, total - 1);
@@ -311,6 +301,7 @@ void Game::Draw() const
 
     gameplay::MazeRenderer::Draw(m_Maze);
     DrawPillars();
+    DrawCollectibles();
     DrawCharacter();
     DrawHUD();
 }
@@ -385,7 +376,10 @@ void Game::Integrate(float dt)
     for (auto& rp : m_Reflectors)
         reflected |= rp.TryReflect(m_Character, m_Vx, m_Vy, dt);
 
-
+    if (reflected) {
+        gameplay::CollisionSystemMaze::DepenetratePosition(
+            m_Maze, m_Character, m_CharacterRadius, 16, 0.75f);
+    }
 
     for (auto& mp : m_Movable)
         mp.Step(dt, 0.f, 0.f, m_Window.width, m_Window.height, m_BounceLoss);
@@ -399,9 +393,7 @@ void Game::Integrate(float dt)
     int total = int(pillars.size());
     int active = -1;
     if (total > 0) {
-        // clamp current
         if (m_CurrentPillarIndex < 0 || m_CurrentPillarIndex >= total) m_CurrentPillarIndex = 0;
-
         if (m_AutoRotateActive) {
             m_ActiveRotateTimer += dt;
             if (m_ActiveRotateTimer >= m_ActiveRotatePeriod) {
@@ -416,25 +408,20 @@ void Game::Integrate(float dt)
         active = -1;
     }
 
-    // blades-only for kinematics
     std::vector<ThreeBlade> blades;
     blades.reserve(pillars.size());
     std::transform(pillars.begin(), pillars.end(), std::back_inserter(blades),
                    [](const auto& pr){ return pr.first; });
 
-    // wrap single active index into a set (vector) to match the signature
     std::vector<int> activeSet;
     if (active >= 0) activeSet.push_back(active);
 
-    // 4) player kinematics (PGA-based)
     gameplay::InputState in{ m_HoldUp, m_HoldDown, m_HoldLeft, m_HoldRight, m_HoldBoost };
     gameplay::PlayerController::Tuning tune{}; tune.bounceLoss = m_BounceLoss;
 
     gameplay::PlayerController::StepKinematics(
         m_Character, m_Vx, m_Vy, m_VzEnergy, in, blades, activeSet, dt, tune);
 
-
-    // 5) reflect post-kinematics (instant if we crossed into radius this frame)
     bool reflectedAfter = false;
     for (auto& rp : m_Reflectors)
         reflectedAfter |= rp.TryReflect(m_Character, m_Vx, m_Vy, dt);
@@ -444,36 +431,46 @@ void Game::Integrate(float dt)
             m_Maze, m_Character, m_CharacterRadius, 16, 0.75f);
     }
 
-    // 6) end point check -> regenerate maze + pillars immediately
+    for (size_t i = 0; i < m_Collectibles.size(); ++i) {
+        if (m_Collected[i]) continue;
+        float r = DistPGA(m_Character, m_Collectibles[i]);
+        if (r <= (m_CharacterRadius + m_CollectibleRadius)) {
+            m_Collected[i] = 1;
+            m_CollectiblesRemaining--;
+            std::cout << "Collected " << (i + 1) << " / total, remaining: " << m_CollectiblesRemaining << "\n";
+        }
+    }
+
     {
-        TwoBlade L = m_Character & m_Maze.endCenter;
-        float R = L.Norm();
+        float R = DistPGA(m_Character, m_Maze.endCenter);
         if (R <= (m_Maze.endRadius + m_CharacterRadius)) {
-            std::cout << "Reached end point\n";
+            if (m_CollectiblesRemaining == 0) {
+                std::cout << "Reached end point\n";
 
-            // new random maze
-            gameplay::MazeGenerator::Generate(
-                m_Maze, 14, 10, 80.f, 20.f,
-                m_Window.width, m_Window.height, 0);
+                // new random maze
+                gameplay::MazeGenerator::Generate(
+                    m_Maze, 14, 10, 80.f, 20.f,
+                    m_Window.width, m_Window.height, 0);
 
-            // spawn player at the new start
-            m_Character = m_Maze.startCenter;
-            m_Vx = 0.f; m_Vy = 0.f; m_VzEnergy = 0.f;
+                // spawn player at the new start
+                m_Character = m_Maze.startCenter;
+                m_Vx = 0.f; m_Vy = 0.f; m_VzEnergy = 0.f;
 
-            // new random set of pillars (0..2 of each)
-            SpawnRandomPillars(2, 80.f);
+                // new pillars and collectibles
+                SpawnRandomPillars(2, 80.f);
+                SpawnCollectibles(2, 5, 60.f);
 
-            // pick a fresh active pillar
-            int newTotal = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
-            if (newTotal > 0) {
-                std::uniform_int_distribution<int> pick(0, newTotal - 1);
-                m_CurrentPillarIndex = pick(m_Rng);
-            } else {
-                m_CurrentPillarIndex = -1;
+                // pick a fresh active pillar
+                int newTotal = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
+                if (newTotal > 0) {
+                    std::uniform_int_distribution<int> pick(0, newTotal - 1);
+                    m_CurrentPillarIndex = pick(m_Rng);
+                } else {
+                    m_CurrentPillarIndex = -1;
+                }
+                m_ActiveRotateTimer = 0.f;
+
             }
-            m_ActiveRotateTimer = 0.f;
-
-            return;
         }
     }
 }
@@ -485,7 +482,6 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
     m_Movable.clear();
     m_Reflectors.clear();
 
-    // RNG dists
     std::uniform_int_distribution<int>   count(0, maxPerType);
     std::uniform_real_distribution<float> xDist(margin, m_Window.width  - margin);
     std::uniform_real_distribution<float> yDist(margin, m_Window.height - margin);
@@ -504,14 +500,13 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
     const int nSeek    = count(m_Rng);
     const int nReflect = count(m_Rng);
 
-    // unit direction from a join (P & Q) using the line's Euclidean part
+    // unit dir from join
     auto unitDirFromJoin = [&](const ThreeBlade& P, float& ux, float& uy)
     {
         for (int tries = 0; tries < 16; ++tries) {
             ThreeBlade Q(xDist(m_Rng), yDist(m_Rng), 0.f);
-            TwoBlade  L = P & Q;                   // line through P and Q
-            float dx = L[3];                       // Euclidean part: e23 -> dx
-            float dy = L[4];                       // e31 -> dy
+            TwoBlade  L = P & Q;
+            float dx = L[3], dy = L[4];
             float n2 = dx*dx + dy*dy;
             if (n2 > 1e-8f) {
                 float inv = 1.0f / std::sqrt(n2);
@@ -529,9 +524,9 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
         m_PillarArray.emplace_back(c, gameplay::PillarType::Normal);
     }
 
+    // Movable (orbit)
     for (int i = 0; i < nMovable; ++i) {
         ThreeBlade anchor(xDist(m_Rng), yDist(m_Rng), 0.f);
-
         float ux, uy; unitDirFromJoin(anchor, ux, uy);
         float R = orbitRDist(m_Rng);
 
@@ -543,36 +538,36 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
             gameplay::MovablePillar::MakeOrbit(anchor, start, w, 240.f));
     }
 
+    // Linear movers
     for (int i = 0; i < nLinear; ++i) {
         ThreeBlade S(xDist(m_Rng), yDist(m_Rng), 0.f);
-
         float ux, uy; unitDirFromJoin(S, ux, uy);
         float s = speedDist(m_Rng);
         float vx = s * ux;
         float vy = s * uy;
-
         m_Movable.push_back(
             gameplay::MovablePillar::MakeLinear(S, vx, vy, 240.f));
     }
 
+    // Seekers
     for (int i = 0; i < nSeek; ++i) {
         ThreeBlade start (xDist(m_Rng), yDist(m_Rng), 0.f);
         ThreeBlade target(xDist(m_Rng), yDist(m_Rng), 0.f);
         float ms = maxSpeedDist(m_Rng);
         float ac = accelDist(m_Rng);
-
         m_Movable.push_back(
             gameplay::MovablePillar::MakeSeek(start, target, ms, ac, 240.f));
     }
 
-    // Reflectors: random center and trigger radius
+    // Reflectors
     for (int i = 0; i < nReflect; ++i) {
         float x = xDist(m_Rng), y = yDist(m_Rng);
         float tr = triggerDist(m_Rng);
-        m_Reflectors.push_back(gameplay::ReflectPillar::Make(ThreeBlade(x, y, 0.f), tr));
+        m_Reflectors.push_back(
+            gameplay::ReflectPillar::Make(ThreeBlade(x, y, 0.f), tr));
     }
 
-    // reset active selection
+    // reset active rotation timer and choose a new active if possible
     m_ActiveRotateTimer = 0.f;
     int total = int(m_PillarArray.size() + m_Movable.size() + m_Reflectors.size());
     if (total > 0) {
@@ -582,8 +577,75 @@ void Game::SpawnRandomPillars(int maxPerType, float margin)
         m_CurrentPillarIndex = -1;
     }
 }
+void Game::SpawnCollectibles(int minCount, int maxCount, float margin)
+{
+    m_Collectibles.clear();
+    m_Collected.clear();
 
+    if (minCount > maxCount) std::swap(minCount, maxCount);
 
+    std::uniform_int_distribution<int> nDist(minCount, maxCount);
+    std::uniform_real_distribution<float> xDist(margin, m_Window.width  - margin);
+    std::uniform_real_distribution<float> yDist(margin, m_Window.height - margin);
+
+    const int n = nDist(m_Rng);
+    m_Collectibles.reserve(n);
+    m_Collected.assign(n, 0);
+    m_CollectiblesRemaining = n;
+
+    const float sep = 2.0f * m_CollectibleRadius + 8.f;   // min spacing between collectibles
+    const float pad = 2.0f;                               // tiny padding from walls
+
+    for (int i = 0; i < n; ++i) {
+        ThreeBlade c(0.f, 0.f, 0.f);
+        bool placed = false;
+
+        for (int tries = 0; tries < 128 && !placed; ++tries) {
+            float x = xDist(m_Rng), y = yDist(m_Rng);
+            ThreeBlade cand(x, y, 0.f);
+
+            if (CircleOverlapsAnyWall(m_Maze, x, y, m_CollectibleRadius + pad)) continue;
+
+            if (DistPGA(cand, m_Maze.startCenter) < (m_CollectibleRadius + 20.f)) continue;
+            if (DistPGA(cand, m_Maze.endCenter)   < (m_CollectibleRadius + m_Maze.endRadius + 10.f)) continue;
+
+            bool ok = true;
+            for (const auto& other : m_Collectibles) {
+                if (DistPGA(cand, other) < sep) { ok = false; break; }
+            }
+            if (!ok) continue;
+
+            c = cand;
+            placed = true;
+        }
+
+        if (!placed) {
+            // fallback -> scan outward a bit around start center until free
+            float sx = m_Maze.startCenter[0], sy = m_Maze.startCenter[1];
+            for (int k = 0; k < 64 && !placed; ++k) {
+                float dx = (k % 16) * 6.f;
+                float dy = (k / 16) * 6.f;
+                float x = std::clamp(sx + dx, margin, m_Window.width  - margin);
+                float y = std::clamp(sy + dy, margin, m_Window.height - margin);
+                if (!CircleOverlapsAnyWall(m_Maze, x, y, m_CollectibleRadius + pad)) {
+                    c = ThreeBlade(x, y, 0.f);
+                    placed = true;
+                }
+            }
+            if (!placed) {
+                // drop anywhere (still check walls)
+                float x = xDist(m_Rng), y = yDist(m_Rng);
+                if (CircleOverlapsAnyWall(m_Maze, x, y, m_CollectibleRadius + pad)) {
+                    // nudge out by a tiny epsilon
+                    x += 2.f; y += 2.f;
+                }
+                c = ThreeBlade(x, y, 0.f);
+            }
+        }
+
+        m_Collectibles.push_back(c);
+    }
+}
 void Game::HandleWallCollisions()
 {
     gameplay::CollisionSystem::ResolveWalls(
@@ -606,6 +668,25 @@ void Game::DrawPillars() const
     gameplay::PillarRenderer::Draw(pillars, active);
 }
 
+void Game::DrawCollectibles() const
+{
+    // simple circles for collectibles
+    for (size_t i = 0; i < m_Collectibles.size(); ++i) {
+        const ThreeBlade& C = m_Collectibles[i];
+        if (m_Collected[i]) {
+            // faint outline for collected
+            SetColor(Color4f{0.4f, 0.9f, 0.5f, 0.35f});
+            DrawCircle(C[0], C[1], m_CollectibleRadius + 2.f);
+        } else {
+            // solid for not collected
+            SetColor(Color4f{0.4f, 0.9f, 0.5f, 0.95f});
+            FillCircle(C[0], C[1], m_CollectibleRadius);
+            SetColor(Color4f{0.1f, 0.3f, 0.15f, 0.9f});
+            DrawCircle(C[0], C[1], m_CollectibleRadius + 2.f);
+        }
+    }
+}
+
 void Game::DrawCharacter() const
 {
     gameplay::PlayerRenderer::Draw(m_Character, m_CharacterRadius, m_VzEnergy);
@@ -613,6 +694,7 @@ void Game::DrawCharacter() const
 
 void Game::DrawHUD() const
 {
+    // You can add collectibles remaining text to your HUD if desired.
     gameplay::HUDRenderer::Draw(m_Vx, m_Vy, m_MaxSpeed, m_VzEnergy, m_Window.height);
 }
 
@@ -653,3 +735,81 @@ void Game::AddReflector(const ThreeBlade& c, float triggerR, float cooldown)
     (void)cooldown;
     m_Reflectors.push_back(gameplay::ReflectPillar::Make(c, triggerR, cooldown));
 }
+
+
+float Game::DistPGA(const ThreeBlade& A, const ThreeBlade& B)
+{
+    TwoBlade L = A & B;
+    return L.Norm();
+}
+
+
+/// keep this helper once, near the top (not duplicated)
+OneBlade Game::UnitLine(float a, float b, float c)
+{
+    const float n = std::sqrt(std::max(1e-12f, a*a + b*b));
+    return OneBlade(c / n, a / n, b / n, 0.0f);
+}
+
+bool Game::CircleOverlapsAnyWall(const gameplay::Maze& maze,
+                                 float cx, float cy, float r)
+{
+    const ThreeBlade X(cx, cy, 0.f);
+
+    for (const auto& w : maze.walls)
+    {
+        const float left   = w.x;
+        const float right  = w.x + w.w;
+        const float bottom = w.y;
+        const float top    = w.y + w.h;
+
+        const OneBlade L = UnitLine(+1.f,  0.f, -left);
+        const OneBlade R = UnitLine(-1.f,  0.f, +right);
+        const OneBlade B = UnitLine( 0.f, +1.f, -bottom);
+        const OneBlade T = UnitLine( 0.f, -1.f, +top);
+
+        const float sL = L & X;
+        const float sR = R & X;
+        const float sB = B & X;
+        const float sT = T & X;
+
+        const bool insideX = (sL >= 0.f && sR >= 0.f);
+        const bool insideY = (sB >= 0.f && sT >= 0.f);
+
+        if (insideX && insideY)
+        {
+            const float dEdge = std::min(std::min(sL, sR), std::min(sB, sT));
+            if (dEdge <= r) return true;
+        }
+        else if (insideY && sL < 0.f)
+        {
+            if (-sL <= r) return true;
+        }
+        else if (insideY && sR < 0.f)
+        {
+            if (-sR <= r) return true;
+        }
+        else if (insideX && sB < 0.f)
+        {
+            if (-sB <= r) return true;
+        }
+        else if (insideX && sT < 0.f)
+        {
+            if (-sT <= r) return true;
+        }
+        else
+        {
+            const ThreeBlade CBL(left,  bottom, 0.f);
+            const ThreeBlade CBR(right, bottom, 0.f);
+            const ThreeBlade CTL(left,  top,    0.f);
+            const ThreeBlade CTR(right, top,    0.f);
+
+            if (DistPGA(X, CBL) <= r) return true;
+            if (DistPGA(X, CBR) <= r) return true;
+            if (DistPGA(X, CTL) <= r) return true;
+            if (DistPGA(X, CTR) <= r) return true;
+        }
+    }
+    return false;
+}
+
