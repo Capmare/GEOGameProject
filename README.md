@@ -2,7 +2,7 @@
 
 
 ----------------------------------------------------------------
-## 2) Incidence and distances
+## 1) Incidence and distances
 1) Incidence test (point on line):
 ```cpp
 OneBlade l = OneBlade(c, a, b, 0).Normalized();
@@ -36,7 +36,7 @@ float tx = -ry,     ty = +rx;
 ```
 
 ----------------------------------------------------------------
-## 3) Motors
+## 2) Motors
 
 A) Pure translator in 2D (ideal directions only):
 ```cpp
@@ -98,7 +98,7 @@ void ReflectVelocityAcrossUnitLine(float& vx, float& vy, const OneBlade& l_unit)
 ```
 
 ----------------------------------------------------------------
-## 4) How each gameplay feature uses PGA
+## 3) How each gameplay feature uses PGA
 
 A) Player translation every frame
 ```cpp
@@ -135,7 +135,7 @@ G) Collectibles and end gate
 - Allow finish only when all collected and `DistPGA(player, endCenter) <= r_sum`.
 
 ----------------------------------------------------------------
-## 5) Ready-to-use snippets (copy/paste)
+## 4) Ready-to-use snippets (copy/paste)
 
 Point-point distance:
 ```cpp
